@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Government Schools Distance Analysis System</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <div class="header-content">
+                <i class="fas fa-map-marked-alt header-icon"></i>
+                <h1>Government Schools Distance Analysis System</h1>
+                <p class="subtitle">Compare distances from Government Schools to BEC, NHCD, and BEF Schools</p>
+            </div>
+        </header>
+
+        <div class="main-content">
+            <div class="upload-section">
+                <div class="info-card">
+                    <i class="fas fa-info-circle"></i>
+                    <h3>System Overview</h3>
+                    <p>This system analyzes the distances between government schools and BEC, NHCD, and BEF schools to identify which schools are nearest to each government school.</p>
+                </div>
+
+                <form id="uploadForm" enctype="multipart/form-data">
+                    <div class="file-upload-container">
+                        <!-- Government Schools File Upload -->
+                        <div class="file-upload-box">
+                            <div class="file-upload-header">
+                                <i class="fas fa-school"></i>
+                                <h3>Government Schools Data</h3>
+                            </div>
+                            <div class="file-upload-content">
+                                <div class="file-input-wrapper">
+                                    <input type="file" id="govFile" name="gov_file" accept=".csv,.xlsx,.xls" required>
+                                    <label for="govFile" class="file-label">
+                                        <i class="fas fa-cloud-upload-alt"></i>
+                                        <span class="file-label-text">Choose Government Schools File</span>
+                                        <span class="file-format">CSV or Excel</span>
+                                    </label>
+                                    <div class="file-name" id="govFileName"></div>
+                                </div>
+                                <div class="expected-columns">
+                                    <h4><i class="fas fa-list"></i> Expected Columns:</h4>
+                                    <ul>
+                                        <li>BemisCode</li>
+                                        <li>School Name</li>
+                                        <li>X-Cord, Y-Cord</li>
+                                        <li>District, Tehsil, UC</li>
+                                        <li>Level, Gender, Enrollmen</li>
+                                        <li>Space for new Rooms, Total Rooms</li>
+                                        <li>Toilets, Boundry wall, Drinking Water</li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- BEC/NHCD/BEF Schools File Upload -->
+                        <div class="file-upload-box">
+                            <div class="file-upload-header special">
+                                <i class="fas fa-graduation-cap"></i>
+                                <h3>BEC / NHCD / BEF Schools Data</h3>
+                            </div>
+                            <div class="file-upload-content">
+                                <div class="file-input-wrapper">
+                                    <input type="file" id="specialFile" name="special_file" accept=".csv,.xlsx,.xls" required>
+                                    <label for="specialFile" class="file-label">
+                                        <i class="fas fa-cloud-upload-alt"></i>
+                                        <span class="file-label-text">Choose BEC/NHCD/BEF Schools File</span>
+                                        <span class="file-format">CSV or Excel</span>
+                                    </label>
+                                    <div class="file-name" id="specialFileName"></div>
+                                </div>
+                                <div class="expected-columns">
+                                    <h4><i class="fas fa-list"></i> Expected Columns:</h4>
+                                    <ul>
+                                        <li>BemisCode</li>
+                                        <li>SchoolName</li>
+                                        <li>Division, District, Tehsil</li>
+                                        <li>Gender, SchoolLevel</li>
+                                        <li>FunctionalStatus</li>
+                                        <li>Student Count, Source</li>
+                                        <li>_xCord, _yCord</li>
+                                        <li>School Owned</li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="action-buttons">
+                        <button type="submit" class="btn btn-primary" id="analyzeBtn">
+                            <i class="fas fa-chart-line"></i>
+                            Analyze Distances
+                        </button>
+                        <button type="reset" class="btn btn-secondary" id="resetBtn">
+                            <i class="fas fa-redo"></i>
+                            Reset
+                        </button>
+                    </div>
+                </form>
+
+                <!-- Progress Section -->
+                <div class="progress-section" id="progressSection" style="display: none;">
+                    <div class="progress-bar-container">
+                        <div class="progress-bar" id="progressBar"></div>
+                    </div>
+                    <p class="progress-text" id="progressText">Processing files...</p>
+                </div>
+
+                <!-- Error Message -->
+                <div class="error-message" id="errorMessage" style="display: none;">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <span id="errorText"></span>
+                </div>
+            </div>
+
+            <!-- Features Section -->
+            <div class="features-section">
+                <h2><i class="fas fa-star"></i> Key Features</h2>
+                <div class="features-grid">
+                    <div class="feature-card">
+                        <i class="fas fa-calculator"></i>
+                        <h3>Distance Calculation</h3>
+                        <p>Precise haversine distance calculation between government schools and special schools</p>
+                    </div>
+                    <div class="feature-card">
+                        <i class="fas fa-map-marker-alt"></i>
+                        <h3>Nearest School Detection</h3>
+                        <p>Identifies the nearest BEC, NHCD, and BEF school for each government school</p>
+                    </div>
+                    <div class="feature-card">
+                        <i class="fas fa-chart-pie"></i>
+                        <h3>Comprehensive Analysis</h3>
+                        <p>Detailed summary statistics and distance range breakdowns</p>
+                    </div>
+                    <div class="feature-card">
+                        <i class="fas fa-map"></i>
+                        <h3>Interactive Map</h3>
+                        <p>Visual representation of all schools with distance connections</p>
+                    </div>
+                    <div class="feature-card">
+                        <i class="fas fa-file-excel"></i>
+                        <h3>Excel Export</h3>
+                        <p>Download complete analysis report in Excel format</p>
+                    </div>
+                    <div class="feature-card">
+                        <i class="fas fa-download"></i>
+                        <h3>Map Export</h3>
+                        <p>Save interactive maps as HTML files for offline viewing</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <footer class="footer">
+            <p>&copy; 2026 Government Schools Distance Analysis System. All rights reserved.</p>
+        </footer>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>
