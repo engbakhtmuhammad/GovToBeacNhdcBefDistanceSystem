@@ -534,4 +534,7 @@ if __name__ == '__main__':
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
     os.makedirs(app.config['DOWNLOAD_FOLDER'], exist_ok=True)
     
-    app.run(debug=True, port=5000)
+    # Use debug mode only in development
+    debug_mode = os.getenv('FLASK_ENV') == 'development'
+    port = int(os.getenv('PORT', 5000))
+    app.run(debug=debug_mode, host='0.0.0.0', port=port)
