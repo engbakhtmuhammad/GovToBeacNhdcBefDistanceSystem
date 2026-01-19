@@ -94,7 +94,6 @@ function startProgressiveLoading() {
         }
     }, 5000);
 }
-}
 
 function updateProgress(data) {
     // Update progress display
