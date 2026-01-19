@@ -22,15 +22,39 @@ document.addEventListener('DOMContentLoaded', function() {
 function startProgressiveLoading() {
     const loadingOverlay = document.getElementById('loadingOverlay');
     
+    console.log('Starting progressive loading for session:', sessionId);
+    
     // Connect to SSE endpoint
     eventSource = new EventSource(`/progress/${sessionId}`);
+    let messageCount = 0;
+    
+    console.log('EventSource created, waiting for data...');
+    
+    eventSource.onopen = function(event) {
+        console.log('✓ SSE connection opened successfully');
+    };
     
     eventSource.onmessage = function(event) {
+        messageCount++;
+        console.log(`SSE message #${messageCount} received:`, event.data);
         const data = JSON.parse(event.data);
         
-        updateProgress(data);
+        console.log('Parsed data:', {
+            status: data.status,
+            progress: data.progress,
+            total: data.total,
+            resultsCount: data.results?.length || 0
+        });
+        
+        // Always update progress even if waiting
+        if (data.status !== 'waiting') {
+            updateProgress(data);
+        } else {
+            console.log('⏳ Waiting for analysis to start...');
+        }
         
         if (data.status === 'completed') {
+            console.log('✓ Analysis completed successfully');
             isAnalysisComplete = true;
             eventSource.close();
             
@@ -41,6 +65,7 @@ function startProgressiveLoading() {
                 loadingOverlay.classList.add('hidden');
             }, 1000);
         } else if (data.status === 'error') {
+            console.error('❌ Analysis error:', data.error);
             eventSource.close();
             showError(data.error || 'An error occurred during analysis');
             loadingOverlay.classList.add('hidden');
@@ -48,12 +73,27 @@ function startProgressiveLoading() {
     };
     
     eventSource.onerror = function(error) {
-        console.error('SSE Error:', error);
+        console.error('❌ SSE Error:', error);
+        console.log('SSE readyState:', eventSource.readyState);
+        console.log('Messages received before error:', messageCount);
         eventSource.close();
         
         // Fallback to polling if SSE fails
+        console.log('⚠️ Switching to polling fallback');
         startPolling();
     };
+    
+    // Timeout check after 5 seconds
+    setTimeout(() => {
+        if (messageCount === 0) {
+            console.error('⚠️ No SSE messages received after 5 seconds - switching to polling');
+            if (eventSource && eventSource.readyState !== EventSource.CLOSED) {
+                eventSource.close();
+                startPolling();
+            }
+        }
+    }, 5000);
+}
 }
 
 function updateProgress(data) {

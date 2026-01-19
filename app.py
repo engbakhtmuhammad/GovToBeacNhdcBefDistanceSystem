@@ -41,6 +41,27 @@ def haversine_distance(lat1, lon1, lat2, lon2):
     r = 6371  # Radius of earth in kilometers
     return c * r
 
+def haversine_vectorized(lat1, lon1, lat2_array, lon2_array):
+    """
+    Vectorized haversine distance calculation
+    Calculate distance from one point to multiple points
+    Returns array of distances in kilometers
+    """
+    # Convert to radians
+    lat1_rad = np.radians(lat1)
+    lon1_rad = np.radians(lon1)
+    lat2_rad = np.radians(lat2_array)
+    lon2_rad = np.radians(lon2_array)
+    
+    # Haversine formula
+    dlat = lat2_rad - lat1_rad
+    dlon = lon2_rad - lon1_rad
+    
+    a = np.sin(dlat/2)**2 + np.cos(lat1_rad) * np.cos(lat2_rad) * np.sin(dlon/2)**2
+    c = 2 * np.arcsin(np.sqrt(a))
+    
+    return 6371 * c  # Earth radius in kilometers
+
 def read_excel_or_csv(file_path):
     """Read CSV or Excel file"""
     try:
@@ -77,14 +98,15 @@ def analyze_distances(gov_df, special_df, session_id=None, progress_callback=Non
     print(f"Custom schools columns: {list(special_df.columns)}")
     
     # Identify coordinate columns in government data
+    # NOTE: X-Cord contains LATITUDE and Y-Cord contains LONGITUDE in government data (swapped!)
     gov_lat_col = None
     gov_lon_col = None
     for col in gov_df.columns:
         col_lower = col.lower()
-        if 'y' in col_lower and ('cord' in col_lower or 'coord' in col_lower or col_lower == 'y-cord'):
-            gov_lat_col = col
-        elif 'x' in col_lower and ('cord' in col_lower or 'coord' in col_lower or col_lower == 'x-cord'):
-            gov_lon_col = col
+        if 'x' in col_lower and ('cord' in col_lower or 'coord' in col_lower or col_lower == 'x-cord'):
+            gov_lat_col = col  # X-Cord actually contains latitude
+        elif 'y' in col_lower and ('cord' in col_lower or 'coord' in col_lower or col_lower == 'y-cord'):
+            gov_lon_col = col  # Y-Cord actually contains longitude
     
     # Identify coordinate columns in custom schools data
     special_lat_col = None
@@ -99,6 +121,10 @@ def analyze_distances(gov_df, special_df, session_id=None, progress_callback=Non
     if not all([gov_lat_col, gov_lon_col, special_lat_col, special_lon_col]):
         raise ValueError("Could not identify coordinate columns in the uploaded files")
     
+    print(f"Coordinate columns detected:")
+    print(f"  Gov Latitude: {gov_lat_col}, Gov Longitude: {gov_lon_col}")
+    print(f"  Custom Latitude: {special_lat_col}, Custom Longitude: {special_lon_col}")
+    
     # Find enrollment column in government data
     enrollment_col = None
     for col in gov_df.columns:
@@ -110,12 +136,22 @@ def analyze_distances(gov_df, special_df, session_id=None, progress_callback=Non
     print(f"Enrollment column found: {enrollment_col}")
     
     # Process each government school
+    valid_gov_schools = 0
+    skipped_gov_schools = 0
+    
     for idx, gov_school in gov_df.iterrows():
         gov_lat = clean_coordinate(gov_school.get(gov_lat_col))
         gov_lon = clean_coordinate(gov_school.get(gov_lon_col))
         
         if gov_lat is None or gov_lon is None:
+            skipped_gov_schools += 1
+            if skipped_gov_schools <= 3:  # Log first 3 skipped schools
+                print(f"Skipping school {idx}: Invalid coordinates - Lat: {gov_school.get(gov_lat_col)}, Lon: {gov_school.get(gov_lon_col)}")
             continue
+        
+        valid_gov_schools += 1
+        if valid_gov_schools <= 2:  # Log first 2 valid schools
+            print(f"Processing school {idx}: {gov_school.get('School Name')} - Lat: {gov_lat}, Lon: {gov_lon}")
         
         # Get government school info
         gov_school_name = gov_school.get('School Name', 'N/A')
@@ -126,26 +162,44 @@ def analyze_distances(gov_df, special_df, session_id=None, progress_callback=Non
         gov_level = gov_school.get('Level', 'N/A')
         gov_gender = gov_school.get('Gender', 'N/A')
         
+        # Additional government school fields
+        gov_space_for_rooms = gov_school.get('Space for new Rooms', 'N/A')
+        gov_total_rooms = gov_school.get('Total Rooms', 'N/A')
+        gov_toilets = gov_school.get('Toilets', 'N/A')
+        gov_boundary_wall = gov_school.get('Boundry wall', gov_school.get('Boundary wall', 'N/A'))
+        gov_drinking_water = gov_school.get('Drinking Water', 'N/A')
+        
         # Get enrollment value
         enrollment_value = gov_school.get(enrollment_col, 'N/A') if enrollment_col else 'N/A'
         if pd.isna(enrollment_value) or str(enrollment_value).strip().upper() == 'N/A':
             enrollment_value = 'N/A'
         
-        # Find ALL custom schools within 5km
+        # Find ALL custom schools within 5km using vectorized calculation
         custom_schools_within_5km = []
         
-        # Calculate distances to all custom schools
-        for _, custom_school in special_df.iterrows():
-            custom_lat = clean_coordinate(custom_school.get(special_lat_col))
-            custom_lon = clean_coordinate(custom_school.get(special_lon_col))
+        # Vectorized distance calculation to all custom schools at once
+        custom_lats = special_df[special_lat_col].apply(clean_coordinate).values
+        custom_lons = special_df[special_lon_col].apply(clean_coordinate).values
+        
+        # Filter out invalid coordinates
+        valid_mask = ~(pd.isna(custom_lats) | pd.isna(custom_lons))
+        valid_indices = np.where(valid_mask)[0]
+        
+        if len(valid_indices) > 0:
+            # Calculate all distances at once
+            distances = haversine_vectorized(gov_lat, gov_lon, 
+                                            custom_lats[valid_mask], 
+                                            custom_lons[valid_mask])
             
-            if custom_lat is None or custom_lon is None:
-                continue
+            # Find schools within 5km
+            within_5km_mask = distances <= 5.0
+            within_5km_indices = valid_indices[within_5km_mask]
+            within_5km_distances = distances[within_5km_mask]
             
-            distance = haversine_distance(gov_lat, gov_lon, custom_lat, custom_lon)
-            
-            # Only include schools within 5km
-            if distance <= 5.0:
+            # Create result entries for schools within 5km
+            for idx_offset, (custom_idx, distance) in enumerate(zip(within_5km_indices, within_5km_distances)):
+                custom_school = special_df.iloc[custom_idx]
+                
                 custom_info = {
                     'custom_school_name': custom_school.get('SchoolName', 'N/A'),
                     'custom_bemis_code': custom_school.get('BemisCode', 'N/A'),
@@ -157,9 +211,9 @@ def analyze_distances(gov_df, special_df, session_id=None, progress_callback=Non
                     'custom_students': custom_school.get('Student Count', custom_school.get('Students', 'N/A')),
                     'custom_functional_status': custom_school.get('FunctionalStatus', 'N/A'),
                     'custom_source': custom_school.get('Source', 'N/A'),
-                    'distance': round(distance, 2),
-                    'custom_latitude': custom_lat,
-                    'custom_longitude': custom_lon
+                    'distance': round(float(distance), 2),
+                    'custom_latitude': custom_lats[custom_idx],
+                    'custom_longitude': custom_lons[custom_idx]
                 }
                 custom_schools_within_5km.append(custom_info)
         
@@ -177,6 +231,11 @@ def analyze_distances(gov_df, special_df, session_id=None, progress_callback=Non
                 'gov_level': gov_level,
                 'gov_gender': gov_gender,
                 'gov_enrollment': enrollment_value,
+                'gov_space_for_rooms': gov_space_for_rooms,
+                'gov_total_rooms': gov_total_rooms,
+                'gov_toilets': gov_toilets,
+                'gov_boundary_wall': gov_boundary_wall,
+                'gov_drinking_water': gov_drinking_water,
                 'gov_latitude': gov_lat,
                 'gov_longitude': gov_lon,
                 'custom_school_name': custom_info['custom_school_name'],
@@ -198,11 +257,21 @@ def analyze_distances(gov_df, special_df, session_id=None, progress_callback=Non
         
         processed += 1
         
-        # Report progress
-        if progress_callback and session_id:
-            # For progress reporting, send the first result of this gov school
-            if custom_schools_within_5km:
-                progress_callback(session_id, results[-len(custom_schools_within_5km)], processed, total_schools)
+        if processed <= 3 or processed % 50 == 0:  # Log first 3 and every 50th school
+            print(f"Gov school {processed}/{total_schools}: Found {len(custom_schools_within_5km)} custom schools within 5km")
+        
+        # Report progress less frequently (every 10 schools instead of every school)
+        if progress_callback and session_id and (processed % 10 == 0 or processed == total_schools):
+            # Always report progress, even if no schools found
+            if results:  # If we have any results at all
+                progress_callback(session_id, results[-1], processed, total_schools)
+            elif processed == total_schools:  # End of processing
+                progress_callback(session_id, None, processed, total_schools)
+    
+    print(f"\n=== Analysis Complete ===")
+    print(f"Total government schools processed: {processed}")
+    print(f"Total results generated: {len(results)}")
+    print(f"Valid gov schools: {valid_gov_schools}, Skipped: {skipped_gov_schools}")
     
     return results
 
@@ -309,26 +378,22 @@ def process_analysis_background(session_id, gov_path, special_path):
     Process analysis in background and update session data progressively
     """
     try:
-        # Initialize session
-        analysis_sessions[session_id] = {
-            'status': 'processing',
-            'progress': 0,
-            'total': 0,
-            'results': [],
-            'summary': None,
-            'error': None
-        }
+        # Update session status (already initialized in upload route)
+        if session_id in analysis_sessions:
+            analysis_sessions[session_id]['status'] = 'reading_files'
         
         # Read files
         gov_df = read_excel_or_csv(gov_path)
         special_df = read_excel_or_csv(special_path)
         
-        analysis_sessions[session_id]['total'] = len(gov_df)  # Total government schools
-        analysis_sessions[session_id]['status'] = 'analyzing'
+        if session_id in analysis_sessions:
+            analysis_sessions[session_id]['total'] = len(gov_df)  # Total government schools
+            analysis_sessions[session_id]['status'] = 'analyzing'
         
         def progress_callback(sid, result, processed, total):
             if sid in analysis_sessions:
-                analysis_sessions[sid]['results'].append(result)
+                if result is not None:
+                    analysis_sessions[sid]['results'].append(result)
                 analysis_sessions[sid]['progress'] = processed
                 analysis_sessions[sid]['total'] = total
         
@@ -340,7 +405,9 @@ def process_analysis_background(session_id, gov_path, special_path):
         analysis_sessions[session_id]['status'] = 'completed'
         analysis_sessions[session_id]['results'] = results
         analysis_sessions[session_id]['summary'] = summary
-        analysis_sessions[session_id]['progress'] = len(results)
+        analysis_sessions[session_id]['progress'] = len(gov_df)  # Total government schools processed
+        
+        print(f"Session {session_id} completed: {len(results)} results from {len(gov_df)} schools")
         
         # Save final results to JSON
         results_filename = f"results_{session_id}.json"
@@ -358,6 +425,9 @@ def process_analysis_background(session_id, gov_path, special_path):
         analysis_sessions[session_id]['results_file'] = results_filename
         
     except Exception as e:
+        print(f"Error in session {session_id}: {str(e)}")
+        import traceback
+        traceback.print_exc()
         if session_id in analysis_sessions:
             analysis_sessions[session_id]['status'] = 'error'
             analysis_sessions[session_id]['error'] = str(e)
@@ -396,6 +466,11 @@ def create_excel_report(results, summary, output_path):
                 'Government_Level': r['gov_level'],
                 'Government_Gender': r['gov_gender'],
                 'Government_Enrollment': r['gov_enrollment'],
+                'Government_Space_for_new_Rooms': r.get('gov_space_for_rooms', 'N/A'),
+                'Government_Total_Rooms': r.get('gov_total_rooms', 'N/A'),
+                'Government_Toilets': r.get('gov_toilets', 'N/A'),
+                'Government_Boundary_Wall': r.get('gov_boundary_wall', 'N/A'),
+                'Government_Drinking_Water': r.get('gov_drinking_water', 'N/A'),
                 'Custom_School_Name': r['custom_school_name'],
                 'Custom_BemisCode': r['custom_bemis_code'],
                 'Custom_Source': r['custom_source'],
@@ -443,6 +518,16 @@ def upload_files():
         gov_file.save(gov_path)
         special_file.save(special_path)
         
+        # Initialize session BEFORE starting thread
+        analysis_sessions[session_id] = {
+            'status': 'initializing',
+            'progress': 0,
+            'total': 0,
+            'results': [],
+            'summary': None,
+            'error': None
+        }
+        
         # Start background processing
         thread = threading.Thread(target=process_analysis_background, args=(session_id, gov_path, special_path))
         thread.daemon = True
@@ -460,15 +545,19 @@ def upload_files():
 def progress_stream(session_id):
     """Server-Sent Events endpoint for progress updates"""
     def generate():
+        last_status = None
         while True:
             if session_id in analysis_sessions:
                 session = analysis_sessions[session_id]
+                
+                # Only send if status changed or it's a progress update
+                current_status = session['status']
                 
                 data = {
                     'status': session['status'],
                     'progress': session['progress'],
                     'total': session['total'],
-                    'results': session['results'][-10:] if len(session['results']) > 0 else [],  # Last 10 results
+                    'results': session['results'][-5:] if len(session['results']) > 0 else [],  # Last 5 results
                     'summary': session['summary'],
                     'error': session['error']
                 }
@@ -476,13 +565,19 @@ def progress_stream(session_id):
                 yield f"data: {json.dumps(data)}\n\n"
                 
                 if session['status'] in ['completed', 'error']:
+                    print(f"SSE stream ending for {session_id}: status={session['status']}")
                     break
+                    
+                last_status = current_status
             else:
                 yield f"data: {{\"status\": \"waiting\"}}\n\n"
             
-            time.sleep(0.5)  # Update every 500ms
+            time.sleep(0.3)  # Update every 300ms (faster updates)
     
-    return Response(stream_with_context(generate()), mimetype='text/event-stream')
+    response = Response(stream_with_context(generate()), mimetype='text/event-stream')
+    response.headers['Cache-Control'] = 'no-cache'
+    response.headers['X-Accel-Buffering'] = 'no'
+    return response
 
 @app.route('/results/<session_id>')
 def results(session_id):
@@ -534,7 +629,4 @@ if __name__ == '__main__':
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
     os.makedirs(app.config['DOWNLOAD_FOLDER'], exist_ok=True)
     
-    # Use debug mode only in development
-    debug_mode = os.getenv('FLASK_ENV') == 'development'
-    port = int(os.getenv('PORT', 5000))
-    app.run(debug=debug_mode, host='0.0.0.0', port=port)
+    app.run(debug=True, port=5000)
