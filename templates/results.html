@@ -74,12 +74,12 @@
                     <h3><i class="fas fa-ruler"></i> Average Distances</h3>
                     <div class="avg-distance-grid">
                         <div class="avg-card">
-                            <span class="avg-label">To BEC Schools</span>
-                            <span class="avg-value" id="avgBECDistance">0 km</span>
+                            <span class="avg-label">To BEAC Schools</span>
+                            <span class="avg-value" id="avgBEACDistance">0 km</span>
                         </div>
                         <div class="avg-card">
-                            <span class="avg-label">To NHCD Schools</span>
-                            <span class="avg-value" id="avgNHCDDistance">0 km</span>
+                            <span class="avg-label">To NCHD Schools</span>
+                            <span class="avg-value" id="avgNCHDDistance">0 km</span>
                         </div>
                         <div class="avg-card">
                             <span class="avg-label">To BEF Schools</span>
@@ -118,12 +118,12 @@
                         <span>Government Schools</span>
                     </div>
                     <div class="legend-item">
-                        <span class="legend-marker bec"></span>
-                        <span>BEC Schools</span>
+                        <span class="legend-marker beac"></span>
+                        <span>BEAC Schools</span>
                     </div>
                     <div class="legend-item">
-                        <span class="legend-marker nhcd"></span>
-                        <span>NHCD Schools</span>
+                        <span class="legend-marker nchd"></span>
+                        <span>NCHD Schools</span>
                     </div>
                     <div class="legend-item">
                         <span class="legend-marker bef"></span>
@@ -141,8 +141,8 @@
                         <input type="text" id="searchInput" placeholder="Search schools..." class="search-input">
                         <select id="filterType" class="filter-select">
                             <option value="">All Sources</option>
-                            <option value="BEC">BEC Schools</option>
-                            <option value="NHCD">NHCD Schools</option>
+                            <option value="BEAC">BEAC Schools</option>
+                            <option value="NCHD">NCHD Schools</option>
                             <option value="BEF">BEF Schools</option>
                         </select>
                         <button class="btn btn-success" id="downloadExcelBtn">
@@ -221,7 +221,8 @@
     <script>
         // Pass session_id from Flask to JavaScript
         const sessionId = "{{ session_id }}";
+        console.log('🚀 Results page initialized - v2.0 - Session:', sessionId);
     </script>
-    <script src="{{ url_for('static', filename='js/results.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/results.js') }}?v={{ session_id }}"></script>
 </body>
 </html>

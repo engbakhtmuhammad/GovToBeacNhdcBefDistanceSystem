@@ -737,8 +737,8 @@ input[type="file"] {
 }
 
 .legend-marker.gov { background: var(--gov-color); }
-.legend-marker.bec { background: var(--bec-color); }
-.legend-marker.nhcd { background: var(--nhcd-color); }
+.legend-marker.beac { background: var(--bec-color); }
+.legend-marker.nchd { background: var(--nhcd-color); }
 .legend-marker.bef { background: var(--bef-color); }
 
 #map {
@@ -847,12 +847,12 @@ tbody tr:hover {
     display: inline-block;
 }
 
-.badge-bec {
+.badge-beac {
     background: #dbeafe;
     color: #1e40af;
 }
 
-.badge-nhcd {
+.badge-nchd {
     background: #ede9fe;
     color: #6b21a8;
 }

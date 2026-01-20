@@ -54,15 +54,22 @@ function startProgressiveLoading() {
         }
         
         if (data.status === 'completed') {
-            console.log('✓ Analysis completed successfully');
+            console.log('✅ Analysis completed successfully via SSE');
+            console.log('📊 Final SSE data:', {
+                resultsCount: data.results?.length || 0,
+                summaryExists: !!data.summary,
+                status: data.status
+            });
             isAnalysisComplete = true;
             eventSource.close();
             
             // Load final data
+            console.log('🔄 About to call loadFinalData()...');
             loadFinalData();
             
             setTimeout(() => {
                 loadingOverlay.classList.add('hidden');
+                console.log('🎯 Loading overlay hidden');
             }, 1000);
         } else if (data.status === 'error') {
             console.error('❌ Analysis error:', data.error);
@@ -96,30 +103,42 @@ function startProgressiveLoading() {
 }
 
 function updateProgress(data) {
+    if (!data) return;
+
     // Update progress display
-    document.getElementById('processedCount').textContent = data.progress || 0;
-    document.getElementById('totalCount').textContent = data.total || 0;
+    const processedCntEl = document.getElementById('processedCount');
+    const totalCntEl = document.getElementById('totalCount');
+    const progressPctEl = document.getElementById('progressPercent');
+    const progressFillEl = document.getElementById('loadingProgress');
+
+    if (processedCntEl) processedCntEl.textContent = data.progress || 0;
+    if (totalCntEl) totalCntEl.textContent = data.total || 0;
     
     const percent = data.total > 0 ? Math.round((data.progress / data.total) * 100) : 0;
-    document.getElementById('progressPercent').textContent = percent + '%';
-    document.getElementById('loadingProgress').style.width = percent + '%';
+    if (progressPctEl) progressPctEl.textContent = percent + '%';
+    if (progressFillEl) progressFillEl.style.width = percent + '%';
     
     // Update results as they come
     if (data.results && data.results.length > 0) {
-        // Add new results to collection
+        // Only append NEW results (crucial for polling which might send full list)
+        const newResults = [];
         data.results.forEach(result => {
             const exists = allResults.find(r => 
                 r.gov_bemis_code === result.gov_bemis_code && 
-                r.gov_school_name === result.gov_school_name
+                r.gov_school_name === result.gov_school_name &&
+                r.custom_school_name === result.custom_school_name
             );
             if (!exists) {
                 allResults.push(result);
+                newResults.push(result);
             }
         });
         
-        // Update display incrementally
-        updateTableWithResults(data.results);
-        updateMapWithResults(data.results);
+        // Update display incrementally with ONLY new results
+        if (newResults.length > 0) {
+            updateTableWithResults(newResults);
+            updateMapWithResults(newResults);
+        }
     }
     
     // Update summary if available
@@ -130,33 +149,102 @@ function updateProgress(data) {
 }
 
 function startPolling() {
+    console.log('🔄 Starting polling fallback for session:', sessionId);
+    
     const pollInterval = setInterval(async () => {
+        // Stop if analysis was completed via SSE while we were starting poll
+        if (isAnalysisComplete) {
+            console.log('🛑 Polling stopped: Analysis already marked complete');
+            clearInterval(pollInterval);
+            return;
+        }
+
         try {
-            const response = await fetch(`/api/session/${sessionId}`);
+            // Cache-busting URL
+            const response = await fetch(`/api/session/${sessionId}?t=${Date.now()}`);
             const data = await response.json();
             
-            if (data.status === 'completed' || data.status === 'error') {
+            console.log('📡 Poll response:', { status: data.status, progress: data.progress, total: data.total, hasResults: !!(data.results && data.results.length) });
+            
+            if (data.status === 'completed') {
+                console.log('✅ COMPLETION DETECTED! Stopping poll and loading final data...');
                 clearInterval(pollInterval);
+                isAnalysisComplete = true;
                 
-                if (data.status === 'completed') {
-                    loadFinalData();
-                    document.getElementById('loadingOverlay').classList.add('hidden');
-                } else {
-                    showError(data.error);
+                try {
+                    console.log('📊 Calling loadFinalData()...');
+                    await loadFinalData();
+                    console.log('📊 loadFinalData() completed successfully');
+                } catch (loadError) {
+                    console.error('❌ Error in loadFinalData:', loadError);
                 }
+                
+                const overlay = document.getElementById('loadingOverlay');
+                if (overlay) {
+                    overlay.classList.add('hidden');
+                    overlay.style.display = 'none';
+                    console.log('🎯 Loading overlay hidden');
+                }
+                return; // Exit polling
+            } else if (data.status === 'error') {
+                clearInterval(pollInterval);
+                console.error('❌ Analysis failed:', data.error);
+                showError(data.error);
+                const overlay = document.getElementById('loadingOverlay');
+                if (overlay) {
+                    overlay.classList.add('hidden');
+                    overlay.style.display = 'none';
+                }
+                return;
             } else {
+                // Update progress for active analysis
                 updateProgress(data);
             }
         } catch (error) {
             console.error('Polling error:', error);
         }
-    }, 1000);
+    }, 2000); // 2 second interval
 }
 
 async function loadFinalData() {
+    console.log('📊 Loading final data for session:', sessionId);
     try {
+        // Try to load from API first
         const response = await fetch(`/api/results/${sessionId}`);
-        const data = await response.json();
+        console.log('📊 Final data response status:', response.status, 'type:', response.headers.get('content-type'));
+        
+        if (!response.ok) {
+            console.error('❌ API returned error status:', response.status);
+            // Try fallback: download the JSON file directly
+            console.log('📥 Trying fallback: loading from JSON file...');
+            return await loadFromJsonFile();
+        }
+        
+        // Get response as text first to check for issues
+        const responseText = await response.text();
+        console.log('📊 Response text length:', responseText.length, 'chars');
+        console.log('📊 First 200 chars:', responseText.substring(0, 200));
+        
+        // Try to parse JSON
+        let data;
+        try {
+            data = JSON.parse(responseText);
+            console.log('✅ JSON parsed successfully');
+        } catch (parseError) {
+            console.error('❌ JSON Parse Error:', parseError.message);
+            console.error('📄 Response preview (first 500 chars):', responseText.substring(0, 500));
+            console.error('📄 Response preview (last 500 chars):', responseText.substring(responseText.length - 500));
+            
+            // Try fallback: download the JSON file directly
+            console.log('📥 Trying fallback: loading from JSON file...');
+            return await loadFromJsonFile();
+        }
+        
+        console.log('📊 Final data loaded:', {
+            resultsCount: data.results?.length || 0,
+            summaryExists: !!data.summary,
+            firstResult: data.results?.[0]
+        });
         
         analysisData = data;
         allResults = data.results;
@@ -172,8 +260,47 @@ async function loadFinalData() {
         if (downloadBtn) {
             downloadBtn.disabled = false;
         }
+        
+        console.log('✅ Final data display completed');
     } catch (error) {
-        console.error('Error loading final data:', error);
+        console.error('❌ Error loading final data:', error);
+        showError('Failed to load analysis results: ' + error.message);
+    }
+}
+
+async function loadFromJsonFile() {
+    console.log('📥 Loading data from JSON file as fallback...');
+    try {
+        const response = await fetch(`/download/${sessionId}/json`);
+        if (!response.ok) {
+            throw new Error(`Failed to download JSON file: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        console.log('✅ JSON file loaded successfully:', {
+            resultsCount: data.results?.length || 0,
+            summaryExists: !!data.summary
+        });
+        
+        analysisData = data;
+        allResults = data.results;
+        
+        // Update all displays with final data
+        updateSummaryStats(data.summary);
+        renderCompleteTable(data.results);
+        renderCompleteMap(data.results);
+        initializeCharts(data.summary);
+        
+        // Enable downloads
+        const downloadBtn = document.getElementById('downloadExcelBtn');
+        if (downloadBtn) {
+            downloadBtn.disabled = false;
+        }
+        
+        console.log('✅ Final data display completed from JSON file');
+    } catch (error) {
+        console.error('❌ Fallback also failed:', error);
+        throw error;
     }
 }
 
@@ -190,8 +317,8 @@ function updateSummaryStats(summary) {
     document.getElementById('avgDistance').textContent = (summary.avg_distance || 0) + ' km';
     
     // Update average distances by source type
-    document.getElementById('avgBECDistance').textContent = (summary.avg_bec_distance || 0) + ' km';
-    document.getElementById('avgNHCDDistance').textContent = (summary.avg_nhcd_distance || 0) + ' km';
+    document.getElementById('avgBEACDistance').textContent = (summary.avg_beac_distance || 0) + ' km';
+    document.getElementById('avgNCHDDistance').textContent = (summary.avg_nchd_distance || 0) + ' km';
     document.getElementById('avgBEFDistance').textContent = (summary.avg_bef_distance || 0) + ' km';
 }
 
@@ -226,10 +353,10 @@ function createTableRow(result, index) {
     row.setAttribute('data-index', index);
     row.setAttribute('data-source', result.custom_source || '');
     
-    // Add badge color based on source
+    // Add badge color based on source (handle all variations)
     const sourceColors = {
-        'BEC': 'badge-bec',
-        'NHCD': 'badge-nhcd',
+        'BEAC': 'badge-beac',
+        'NCHD': 'badge-nchd',
         'BEF': 'badge-bef'
     };
     const badgeClass = sourceColors[result.custom_source] || 'badge-none';
@@ -283,8 +410,8 @@ function renderCompleteMap(results) {
     
     // Create distinct icons
     const govIcon = createCustomIcon('#14b8a6', 'fa-school');
-    const becIcon = createCustomIcon('#3b82f6', 'fa-graduation-cap');
-    const nhcdIcon = createCustomIcon('#8b5cf6', 'fa-university');
+    const beacIcon = createCustomIcon('#3b82f6', 'fa-graduation-cap');
+    const nchdIcon = createCustomIcon('#8b5cf6', 'fa-university');
     const befIcon = createCustomIcon('#ec4899', 'fa-building');
     
     // Track unique government schools and custom schools
@@ -293,16 +420,20 @@ function renderCompleteMap(results) {
     
     // Collect unique schools
     results.forEach(result => {
-        // Add government school
-        if (result.gov_latitude && result.gov_longitude) {
+        // Add government school - validate coordinates are numbers, not 'N/A'
+        if (result.gov_latitude && result.gov_longitude && 
+            typeof result.gov_latitude === 'number' && typeof result.gov_longitude === 'number' &&
+            !isNaN(result.gov_latitude) && !isNaN(result.gov_longitude)) {
             const govKey = `${result.gov_latitude},${result.gov_longitude}`;
             if (!govSchools.has(govKey)) {
                 govSchools.set(govKey, result);
             }
         }
         
-        // Add custom school
-        if (result.custom_latitude && result.custom_longitude) {
+        // Add custom school - validate coordinates are numbers, not 'N/A'
+        if (result.custom_latitude && result.custom_longitude &&
+            typeof result.custom_latitude === 'number' && typeof result.custom_longitude === 'number' &&
+            !isNaN(result.custom_latitude) && !isNaN(result.custom_longitude)) {
             const customKey = `${result.custom_latitude},${result.custom_longitude}`;
             if (!customSchools.has(customKey)) {
                 customSchools.set(customKey, {
@@ -318,9 +449,10 @@ function renderCompleteMap(results) {
         }
     });
     
-    // Plot government schools
+    // Plot government schools - double-check coordinates before plotting
     govSchools.forEach(result => {
-        if (result.gov_latitude && result.gov_longitude) {
+        if (result.gov_latitude && result.gov_longitude &&
+            typeof result.gov_latitude === 'number' && typeof result.gov_longitude === 'number') {
             const marker = L.marker([result.gov_latitude, result.gov_longitude], { icon: govIcon })
                 .bindPopup(createGovSchoolPopup(result))
                 .addTo(map);
@@ -328,11 +460,17 @@ function renderCompleteMap(results) {
         }
     });
     
-    // Plot custom schools with appropriate icons
+    // Plot custom schools with appropriate icons based on source type
     customSchools.forEach(school => {
-        
-        const icon = school.source === 'BEC' ? becIcon : 
-                     school.source === 'NHCD' ? nhcdIcon : befIcon;
+        // Assign icons: BEAC -> blue, NCHD -> purple, BEF -> pink
+        let icon;
+        if (school.source === 'BEAC') {
+            icon = beacIcon;
+        } else if (school.source === 'NCHD') {
+            icon = nchdIcon;
+        } else {
+            icon = befIcon;  // BEF and any other source
+        }
         
         const marker = L.marker([school.latitude, school.longitude], { icon })
             .bindPopup(createCustomSchoolPopup(school))
@@ -379,7 +517,7 @@ function createGovSchoolPopup(result) {
             <p style="margin: 5px 0;"><strong>Enrollment:</strong> ${result.gov_enrollment}</p>
             <hr style="margin: 10px 0;">
             <p style="margin: 5px 0;"><strong>Nearest Type:</strong> 
-                <span style="color: ${result.nearest_overall_type === 'BEC' ? '#3b82f6' : result.nearest_overall_type === 'NHCD' ? '#8b5cf6' : '#ec4899'};">
+                <span style="color: ${result.nearest_overall_type === 'BEAC' ? '#3b82f6' : result.nearest_overall_type === 'NCHD' ? '#8b5cf6' : '#ec4899'};">
                     ${result.nearest_overall_type || 'N/A'}
                 </span>
             </p>
@@ -389,7 +527,7 @@ function createGovSchoolPopup(result) {
 }
 
 function createSpecialSchoolPopup(school, type) {
-    const color = type === 'BEC' ? '#3b82f6' : type === 'NHCD' ? '#8b5cf6' : '#ec4899';
+    const color = type === 'BEAC' ? '#3b82f6' : type === 'NCHD' ? '#8b5cf6' : '#ec4899';
     return `
         <div style="min-width: 200px;">
             <h3 style="margin: 0 0 10px 0; color: ${color}; font-size: 1rem;">
@@ -404,13 +542,13 @@ function createSpecialSchoolPopup(school, type) {
 
 function createCustomSchoolPopup(school) {
     const colors = {
-        'BEC': '#3b82f6',
-        'NHCD': '#8b5cf6',
+        'BEAC': '#3b82f6',
+        'NCHD': '#8b5cf6',
         'BEF': '#ec4899'
     };
     const icons = {
-        'BEC': 'fa-graduation-cap',
-        'NHCD': 'fa-university',
+        'BEAC': 'fa-graduation-cap',
+        'NCHD': 'fa-university',
         'BEF': 'fa-building'
     };
     const color = colors[school.source] || '#999';
@@ -450,24 +588,24 @@ function createDistanceRangeChart(summary) {
             labels: ['0-2 km', '2-5 km', '5-10 km', '10+ km'],
             datasets: [
                 {
-                    label: 'BEC Schools',
+                    label: 'BEAC Schools',
                     data: [
-                        summary.bec_distance_ranges['0-2km'],
-                        summary.bec_distance_ranges['2-5km'],
-                        summary.bec_distance_ranges['5-10km'],
-                        summary.bec_distance_ranges['10+km']
+                        summary.beac_distance_ranges['0-2km'],
+                        summary.beac_distance_ranges['2-5km'],
+                        summary.beac_distance_ranges['5-10km'],
+                        summary.beac_distance_ranges['10+km']
                     ],
                     backgroundColor: 'rgba(59, 130, 246, 0.7)',
                     borderColor: 'rgba(59, 130, 246, 1)',
                     borderWidth: 1
                 },
                 {
-                    label: 'NHCD Schools',
+                    label: 'NCHD Schools',
                     data: [
-                        summary.nhcd_distance_ranges['0-2km'],
-                        summary.nhcd_distance_ranges['2-5km'],
-                        summary.nhcd_distance_ranges['5-10km'],
-                        summary.nhcd_distance_ranges['10+km']
+                        summary.nchd_distance_ranges['0-2km'],
+                        summary.nchd_distance_ranges['2-5km'],
+                        summary.nchd_distance_ranges['5-10km'],
+                        summary.nchd_distance_ranges['10+km']
                     ],
                     backgroundColor: 'rgba(139, 92, 246, 0.7)',
                     borderColor: 'rgba(139, 92, 246, 1)',
@@ -520,11 +658,11 @@ function createTypeDistributionChart(summary) {
     new Chart(ctx.getContext('2d'), {
         type: 'doughnut',
         data: {
-            labels: ['Nearest to BEC', 'Nearest to NHCD', 'Nearest to BEF'],
+            labels: ['Nearest to BEAC', 'Nearest to NCHD', 'Nearest to BEF'],
             datasets: [{
                 data: [
-                    summary.nearest_bec_count,
-                    summary.nearest_nhcd_count,
+                    summary.nearest_beac_count,
+                    summary.nearest_nchd_count,
                     summary.nearest_bef_count
                 ],
                 backgroundColor: [
@@ -679,11 +817,11 @@ function downloadMap() {
         </div>
         <div class="legend-item">
             <div class="legend-marker" style="background: #3b82f6;"></div>
-            <span>BEC Schools</span>
+            <span>BEAC Schools</span>
         </div>
         <div class="legend-item">
             <div class="legend-marker" style="background: #8b5cf6;"></div>
-            <span>NHCD Schools</span>
+            <span>NCHD Schools</span>
         </div>
         <div class="legend-item">
             <div class="legend-marker" style="background: #ec4899;"></div>
@@ -738,8 +876,8 @@ function showDetailsModal(result) {
     const modalBody = document.getElementById('modalBody');
     
     // Format lists of schools within 5km
-    const becSchools = result.bec_within_5km || [];
-    const nhcdSchools = result.nhcd_within_5km || [];
+    const beacSchools = result.beac_within_5km || [];
+    const nchdSchools = result.nchd_within_5km || [];
     const befSchools = result.bef_within_5km || [];
     
     const formatSchoolList = (schools, type, color) => {
@@ -831,20 +969,20 @@ function showDetailsModal(result) {
         </div>
     `;
     
-    if (becSchools.length > 0) {
+    if (beacSchools.length > 0) {
         detailsHTML += `
             <div class="detail-section">
-                <h3><i class="fas fa-building"></i> BEC Schools</h3>
-                ${formatSchoolList(becSchools, 'BEC', '#3b82f6')}
+                <h3><i class="fas fa-building"></i> BEAC Schools</h3>
+                ${formatSchoolList(beacSchools, 'BEAC', '#3b82f6')}
             </div>
         `;
     }
     
-    if (nhcdSchools.length > 0) {
+    if (nchdSchools.length > 0) {
         detailsHTML += `
             <div class="detail-section">
-                <h3><i class="fas fa-university"></i> NHCD Schools</h3>
-                ${formatSchoolList(nhcdSchools, 'NHCD', '#8b5cf6')}
+                <h3><i class="fas fa-university"></i> NCHD Schools</h3>
+                ${formatSchoolList(nchdSchools, 'NCHD', '#8b5cf6')}
             </div>
         `;
     }
